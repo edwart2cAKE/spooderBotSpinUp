@@ -139,7 +139,7 @@ void opcontrol()
 	// make controller
 	Controller master;
 
-	int aSpeed = 3600 * 10 / 3;
+	int aSpeed = 3500 * 10 / 3;
 	int bSpeed = 2000 * 10 / 3;
 
 
