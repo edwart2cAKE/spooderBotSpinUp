@@ -3,17 +3,19 @@
 // make controller buttons
 ControllerButton intakeIn(ControllerDigital::R2);
 ControllerButton intakeOut(ControllerDigital::R1);
-ControllerButton slowIntakeIn(ControllerDigital::L1);
 
 ControllerButton fastFlywheel(ControllerDigital::A);
 ControllerButton slowFlywheel(ControllerDigital::B);
+ControllerButton flywheelStop(ControllerDigital::up);
+
+ControllerButton angleChange(ControllerDigital::Y);
 
 // make chassis
 std::shared_ptr<OdomChassisController> chassis =
 	ChassisControllerBuilder()
 		.withMotors(
-			{12, 14, -16},
-			{-13, -15, 17})
+			{-12, -14, 16},
+			{13, 15, -17})
 		// Green gearset, 4 in wheel diam, 11.5 in wheel track
 		.withDimensions(AbstractMotor::gearset::green, {{3.25_in, 11.5_in}, imev5GreenTPR})
 		.withOdometry()
@@ -33,6 +35,9 @@ std::shared_ptr<AsyncMotionProfileController> profileController =
 // make intake and flywheel
 Motor intake(18);
 Motor flywheel(19);
+
+// make angle changer
+pros::ADIDigitalOut changer(8, false);
 
 /**
  * A callback function for LLEMU's center button.
@@ -54,19 +59,6 @@ void on_center_button()
 	}
 }
 
-// for testing piston
-pros::ADIDigitalOut piston(8, false);
-void change_piston()
-{
-	static int times = 0;
-	static bool pushed = false;
-	pushed = !pushed;
-	times++;
-
-	piston.set_value(pushed);
-	pros::lcd::set_text(2, std::to_string(times));
-}
-
 /**
  * Runs initialization code. This occurs as soon as the program is started.
  *
@@ -79,8 +71,10 @@ void initialize()
 	pros::lcd::set_text(1, "Hello PROS User!");
 
 	// pros::lcd::register_btn1_cb(change_piston);
-	intake.setGearing(AbstractMotor::gearset::green);
+	intake.setGearing(AbstractMotor::gearset::blue);
 	intake.setBrakeMode(AbstractMotor::brakeMode::hold);
+
+	flywheel.setBrakeMode(AbstractMotor::brakeMode::coast);
 }
 
 /**
@@ -155,15 +149,11 @@ void opcontrol()
 		// intake code
 		if (intakeIn.isPressed())
 		{
-			intake.moveVoltage(12000);
+			intake.moveVoltage(9000);
 		}
 		else if (intakeOut.isPressed())
 		{
-			intake.moveVoltage(-12000);
-		}
-		else if (slowIntakeIn.isPressed())
-		{
-			intake.moveVoltage(-9600);
+			intake.moveVoltage(-9000);
 		}
 		else
 		{
@@ -179,13 +169,20 @@ void opcontrol()
 		{
 			flywheel.moveVoltage(bSpeed);
 		}
+		else if (flywheelStop.isPressed())
+		{
+			flywheel.moveVoltage(0);
+		}
 		// change brain color if intake is hot
 		if (intake.getTemperature() > 70)
 		{
 			pros::lcd::set_background_color(255,0,0);
 		}
 
-		// i made a change cause github just to check this works again
+		// angle changer
+		if (angleChange.changedToPressed()){
+			//changer.set_value(1-changer.get_value());
+		}
 
 		// wait to give time for the processor to do other tasks
 		pros::delay(20);
