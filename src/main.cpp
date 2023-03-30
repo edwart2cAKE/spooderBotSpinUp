@@ -33,11 +33,13 @@ std::shared_ptr<AsyncMotionProfileController> profileController =
 		.buildMotionProfileController();
 
 // make intake and flywheel
-Motor intake(18);
+Motor intake(7);
 Motor flywheel(19);
 
 // make angle changer
-pros::ADIDigitalOut changer(8, false);
+bool angled = false;
+pros::ADIDigitalOut AngleChanger('h', angled);
+
 
 /**
  * A callback function for LLEMU's center button.
@@ -58,7 +60,6 @@ void on_center_button()
 		pros::lcd::clear_line(2);
 	}
 }
-
 /**
  * Runs initialization code. This occurs as soon as the program is started.
  *
@@ -75,6 +76,8 @@ void initialize()
 	intake.setBrakeMode(AbstractMotor::brakeMode::hold);
 
 	flywheel.setBrakeMode(AbstractMotor::brakeMode::coast);
+	flywheel.setGearing(AbstractMotor::gearset::blue);
+	flywheel.setVelPID(0.0075,0.25,0,0);
 }
 
 /**
@@ -133,8 +136,10 @@ void opcontrol()
 	// make controller
 	Controller master;
 
-	int aSpeed = 3500 * 10 / 3;
-	int bSpeed = 2000 * 10 / 3;
+	int aSpeed = 3600 * 10 / 3;
+	int bSpeed = 3000 * 10 / 3;
+
+	double target = 0.0;
 
 
 	while (true)
@@ -149,11 +154,11 @@ void opcontrol()
 		// intake code
 		if (intakeIn.isPressed())
 		{
-			intake.moveVoltage(9000);
+			intake.moveVoltage(12000);
 		}
 		else if (intakeOut.isPressed())
 		{
-			intake.moveVoltage(-9000);
+			intake.moveVoltage(-12000);
 		}
 		else
 		{
@@ -163,15 +168,17 @@ void opcontrol()
 		// flywheel
 		if (fastFlywheel.isPressed())
 		{
-			flywheel.moveVoltage(aSpeed);
+			flywheel.moveVelocity(600); // max speed
+			target = 600.0;
 		}
 		else if (slowFlywheel.isPressed())
 		{
-			flywheel.moveVoltage(bSpeed);
+			flywheel.moveVelocity(2500/6); // 3k rpm
+			target = 2500/6;
 		}
 		else if (flywheelStop.isPressed())
 		{
-			flywheel.moveVoltage(0);
+			flywheel.moveVoltage(0); // flywheel is just going to keep on spinning
 		}
 		// change brain color if intake is hot
 		if (intake.getTemperature() > 70)
@@ -181,10 +188,21 @@ void opcontrol()
 
 		// angle changer
 		if (angleChange.changedToPressed()){
-			//changer.set_value(1-changer.get_value());
+			angled = !angled;
+			pros::lcd::set_text(7,"sdfsd");
+			AngleChanger.set_value(angled);
 		}
+
+		// print flywheel speed
+		pros::lcd::set_text(6,std::to_string(flywheel.getActualVelocity()));
+		pros::lcd::set_text(5,std::to_string(target));
+
+		// print intake temperature
+		pros::lcd::set_text(4,std::to_string(intake.getTemperature()));
 
 		// wait to give time for the processor to do other tasks
 		pros::delay(20);
 	}
 }
+		
+
