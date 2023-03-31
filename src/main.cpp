@@ -14,8 +14,8 @@ ControllerButton angleChange(ControllerDigital::Y);
 std::shared_ptr<OdomChassisController> chassis =
 	ChassisControllerBuilder()
 		.withMotors(
-			{-12, -14, 16},
-			{13, 15, -17})
+			{-12, -14, 8},
+			{13, 15, -18})
 		// Green gearset, 4 in wheel diam, 11.5 in wheel track
 		.withDimensions(AbstractMotor::gearset::green, {{3.25_in, 11.5_in}, imev5GreenTPR})
 		.withOdometry()
@@ -40,13 +40,20 @@ Motor flywheel(19);
 bool angled = false;
 pros::ADIDigitalOut AngleChanger('h', angled);
 
-
 /**
  * A callback function for LLEMU's center button.
  *
  * When this callback is fired, it will toggle line 2 of the LCD text between
  * "I was pressed!" and nothing.
  */
+
+int pid(double speed, double target)
+{
+	const float kP = 0.1;
+	double error = target - speed;
+	return speed + kP * error;
+}
+
 void on_center_button()
 {
 	static bool pressed = false;
@@ -77,7 +84,7 @@ void initialize()
 
 	flywheel.setBrakeMode(AbstractMotor::brakeMode::coast);
 	flywheel.setGearing(AbstractMotor::gearset::blue);
-	flywheel.setVelPID(0.0075,0.25,0,0);
+	flywheel.setVelPID(0.0075, 1, 0, 0);
 }
 
 /**
@@ -141,7 +148,6 @@ void opcontrol()
 
 	double target = 0.0;
 
-
 	while (true)
 	{
 		pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
@@ -167,42 +173,45 @@ void opcontrol()
 
 		// flywheel
 		if (fastFlywheel.isPressed())
-		{
-			flywheel.moveVelocity(600); // max speed
+		{ // max speed
 			target = 600.0;
 		}
 		else if (slowFlywheel.isPressed())
-		{
-			flywheel.moveVelocity(2500/6); // 3k rpm
-			target = 2500/6;
+		{ // 2.5k rpm
+			target = 2500 / 6;
 		}
 		else if (flywheelStop.isPressed())
 		{
-			flywheel.moveVoltage(0); // flywheel is just going to keep on spinning
+			target = 0; // flywheel is just going to keep on spinning
+			flywheel.moveVoltage(0);
 		}
 		// change brain color if intake is hot
 		if (intake.getTemperature() > 70)
 		{
-			pros::lcd::set_background_color(255,0,0);
+			pros::lcd::set_background_color(255, 0, 0);
 		}
 
 		// angle changer
-		if (angleChange.changedToPressed()){
+		if (angleChange.changedToPressed())
+		{
 			angled = !angled;
-			pros::lcd::set_text(7,"sdfsd");
+			pros::lcd::set_text(7, "sdfsd");
 			AngleChanger.set_value(angled);
 		}
 
+		if (target != 0)
+		{
+			flywheel.moveVelocity(pid(flywheel.getActualVelocity(), target));
+		}
+
 		// print flywheel speed
-		pros::lcd::set_text(6,std::to_string(flywheel.getActualVelocity()));
-		pros::lcd::set_text(5,std::to_string(target));
+		pros::lcd::set_text(6, std::to_string(flywheel.getActualVelocity()));
+		pros::lcd::set_text(5, std::to_string(target));
 
 		// print intake temperature
-		pros::lcd::set_text(4,std::to_string(intake.getTemperature()));
+		pros::lcd::set_text(4, std::to_string(intake.getTemperature()));
 
 		// wait to give time for the processor to do other tasks
 		pros::delay(20);
 	}
 }
-		
-
