@@ -310,7 +310,7 @@
     },
     "upload_options": {
       "description": "worlds code instead of ",
-      "after": "run",
+      "after": "screen",
       "icon": "robot"
     }
   }

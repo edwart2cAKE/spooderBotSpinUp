@@ -14,32 +14,22 @@ ControllerButton angleChange(ControllerDigital::Y);
 std::shared_ptr<OdomChassisController> chassis =
 	ChassisControllerBuilder()
 		.withMotors(
-			{-12, -14, 16},
-			{13, 15, -17})
+			{-12, -14, 8},
+			{13, 15, -18})
 		// Green gearset, 4 in wheel diam, 11.5 in wheel track
-		.withDimensions(AbstractMotor::gearset::green, {{3.25_in, 11.5_in}, imev5GreenTPR})
+		.withDimensions({AbstractMotor::gearset::green, (36.0 / 60.0)}, {{3.25_in, 11.5_in}, imev5GreenTPR})
 		.withOdometry()
 		.buildOdometry();
 
 // make path generator | copied from okapi tutorials
-std::shared_ptr<AsyncMotionProfileController> profileController =
-	AsyncMotionProfileControllerBuilder()
-		.withLimits({
-			2.87,		// Maximum linear velocity of the Chassis in m/s
-			2.0 * 2.87, // Maximum linear acceleration of the Chassis in m/s/s
-			10.0 * 2.87 // Maximum linear jerk of the Chassis in m/s/s/s
-		})
-		.withOutput(chassis)
-		.buildMotionProfileController();
 
 // make intake and flywheel
-Motor intake(7);
-Motor flywheel(19);
+pros::Motor intake(7);
+pros::Motor flywheel(19);
 
 // make angle changer
 bool angled = false;
 pros::ADIDigitalOut AngleChanger('h', angled);
-
 
 /**
  * A callback function for LLEMU's center button.
@@ -47,6 +37,18 @@ pros::ADIDigitalOut AngleChanger('h', angled);
  * When this callback is fired, it will toggle line 2 of the LCD text between
  * "I was pressed!" and nothing.
  */
+double ierror = 0;
+
+int pid(double speed, double target)
+{
+	const float kP = 0.5;
+	const float kI = 0.1;
+	const float dt = 0.01;
+	double perror = target - speed;
+	ierror += perror * dt;
+	return speed + kP * perror;
+}
+
 void on_center_button()
 {
 	static bool pressed = false;
@@ -72,12 +74,11 @@ void initialize()
 	pros::lcd::set_text(1, "Hello PROS User!");
 
 	// pros::lcd::register_btn1_cb(change_piston);
-	intake.setGearing(AbstractMotor::gearset::blue);
-	intake.setBrakeMode(AbstractMotor::brakeMode::hold);
-
-	flywheel.setBrakeMode(AbstractMotor::brakeMode::coast);
-	flywheel.setGearing(AbstractMotor::gearset::blue);
-	flywheel.setVelPID(0.0075,0.25,0,0);
+	flywheel.set_gearing(MOTOR_GEARSET_06);
+	flywheel.set_brake_mode(MOTOR_BRAKE_COAST);
+	intake.set_gearing(MOTOR_GEARSET_06);
+	intake.set_brake_mode(MOTOR_BRAKE_HOLD);
+	// intake.set_pos_pid((0.1, 0.1, 0, 0));
 }
 
 /**
@@ -111,9 +112,9 @@ void competition_initialize() {}
  */
 void autonomous()
 {
-	for (size_t i = 0; i < 4; i++)
+	for (int i = 0; i < 4; i++)
 	{
-		chassis->moveDistance(12_in);
+		chassis->moveDistance(1_tile);
 		chassis->turnAngle(90_deg);
 	}
 }
@@ -141,7 +142,6 @@ void opcontrol()
 
 	double target = 0.0;
 
-
 	while (true)
 	{
 		pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
@@ -154,55 +154,60 @@ void opcontrol()
 		// intake code
 		if (intakeIn.isPressed())
 		{
-			intake.moveVoltage(12000);
+			intake.move_voltage(12000);
 		}
 		else if (intakeOut.isPressed())
 		{
-			intake.moveVoltage(-12000);
+			intake.move_voltage(-7500);
 		}
 		else
 		{
-			intake.moveVoltage(0);
+			intake.move_voltage(0);
 		}
 
 		// flywheel
 		if (fastFlywheel.isPressed())
-		{
-			flywheel.moveVelocity(600); // max speed
+		{ // max speed
 			target = 600.0;
 		}
 		else if (slowFlywheel.isPressed())
-		{
-			flywheel.moveVelocity(2500/6); // 3k rpm
-			target = 2500/6;
+		{ // 2.5k rpm
+			target = 400.0;
+			pros::lcd::set_background_color(255, 0, 0);
 		}
 		else if (flywheelStop.isPressed())
 		{
-			flywheel.moveVoltage(0); // flywheel is just going to keep on spinning
+			target = 0; // flywheel is just going to keep on spinning
+			flywheel.move_voltage(0);
 		}
 		// change brain color if intake is hot
-		if (intake.getTemperature() > 70)
+		if (intake.get_temperature() > 70)
 		{
-			pros::lcd::set_background_color(255,0,0);
+			pros::lcd::set_background_color(255, 0, 0);
 		}
 
 		// angle changer
-		if (angleChange.changedToPressed()){
+		if (angleChange.changedToPressed())
+		{
 			angled = !angled;
-			pros::lcd::set_text(7,"sdfsd");
+			pros::lcd::set_text(7, "sdfsd");
 			AngleChanger.set_value(angled);
 		}
 
+		if (target != 0)
+		{
+			flywheel.move_velocity(pid(flywheel.get_actual_velocity(), target));
+		}
+
 		// print flywheel speed
-		pros::lcd::set_text(6,std::to_string(flywheel.getActualVelocity()));
-		pros::lcd::set_text(5,std::to_string(target));
+		pros::lcd::set_text(6, std::to_string(flywheel.get_actual_velocity()));
+		pros::lcd::set_text(7, std::to_string(ierror));
+		pros::lcd::set_text(5, std::to_string(target));
 
 		// print intake temperature
-		pros::lcd::set_text(4,std::to_string(intake.getTemperature()));
+		pros::lcd::set_text(4, std::to_string(intake.get_temperature()));
 
 		// wait to give time for the processor to do other tasks
 		pros::delay(20);
 	}
 }
-		
-
