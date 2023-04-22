@@ -9,6 +9,7 @@ ControllerButton slowFlywheel(ControllerDigital::B);
 ControllerButton flywheelStop(ControllerDigital::up);
 
 ControllerButton angleChange(ControllerDigital::Y);
+ControllerButton launchEndgame(ControllerDigital::X);
 
 // make chassis
 std::shared_ptr<OdomChassisController> chassis =
@@ -18,6 +19,11 @@ std::shared_ptr<OdomChassisController> chassis =
 			{13, 15, -18})
 		// Green gearset, 4 in wheel diam, 11.5 in wheel track
 		.withDimensions({AbstractMotor::gearset::green, (36.0 / 60.0)}, {{3.25_in, 11.5_in}, imev5GreenTPR})
+		/*/ PID
+		.withGains(
+			{0.45, 0.1, 0.1}, // distance controller gains
+			{0.45, 0.1, 0.1}  // turn controller gains // angle controller gains (helps drive straight)
+			)				  //*/
 		.withOdometry()
 		.buildOdometry();
 
@@ -31,22 +37,39 @@ pros::Motor flywheel(19);
 bool angled = false;
 pros::ADIDigitalOut AngleChanger('h', angled);
 
+pros::ADIDigitalOut endgame('a', false);
+
 /**
  * A callback function for LLEMU's center button.
  *
  * When this callback is fired, it will toggle line 2 of the LCD text between
  * "I was pressed!" and nothing.
  */
-double ierror = 0;
+double integral = 0;
+double prevError = 0;
+double maxSpeed = 0;
+
+const float kP = 1;
+const float kI = 0.1;
+const float kD = 0.2;
 
 int pid(double speed, double target)
 {
-	const float kP = 0.5;
-	const float kI = 0.1;
 	const float dt = 0.01;
-	double perror = target - speed;
-	ierror += perror * dt;
-	return speed + kP * perror;
+	double error = target - speed;
+	integral += error;
+	if (integral > target || error == 0)
+	{
+		integral = 0;
+	}
+	else if (error < -100 || error > 100)
+	{
+		integral = 0;
+	}
+	// double derivative = error - prevError;
+	// prevError = error;
+
+	return speed + kP * error + kI * integral; // + kD * derivative;
 }
 
 void on_center_button()
@@ -76,7 +99,7 @@ void initialize()
 	// pros::lcd::register_btn1_cb(change_piston);
 	flywheel.set_gearing(MOTOR_GEARSET_06);
 	flywheel.set_brake_mode(MOTOR_BRAKE_COAST);
-	intake.set_gearing(MOTOR_GEARSET_06);
+	intake.set_gearing(MOTOR_GEARSET_18);
 	intake.set_brake_mode(MOTOR_BRAKE_HOLD);
 	// intake.set_pos_pid((0.1, 0.1, 0, 0));
 }
@@ -110,13 +133,49 @@ void competition_initialize() {}
  * will be stopped. Re-enabling the robot will restart the task, not re-start it
  * from where it left off.
  */
+
+bool auto_done = false;
+void set_flywheel()
+{
+	while (!auto_done)
+	{
+		flywheel.move_velocity(pid(flywheel.get_actual_velocity(), 615));
+		pros::delay(10);
+	}
+}
+
 void autonomous()
 {
-	for (int i = 0; i < 4; i++)
-	{
-		chassis->moveDistance(1_tile);
-		chassis->turnAngle(90_deg);
-	}
+	pros::Task my_task(set_flywheel);
+
+	chassis->setMaxVelocity(25);
+
+	chassis->setState({0_in, 0_in, 0_deg});
+
+	chassis->driveToPoint({-1.5_in, 0_in}, true);
+	chassis->waitUntilSettled();
+
+	intake.move_relative(-600, 200);
+	pros::delay(500);
+
+	chassis->setMaxVelocity(50);
+
+	chassis->moveDistanceAsync(8_in);
+	intake.move_velocity(-200);
+	chassis->waitUntilSettled();
+
+	chassis->turnAngle(-22.25_deg);
+
+	pros::delay(500);
+
+	intake.move_relative(400, 200);
+
+	pros::delay(1000);
+
+	intake.move_relative(10000, 200);
+
+	pros::delay(100);
+	auto_done = true;
 }
 
 /**
@@ -154,11 +213,11 @@ void opcontrol()
 		// intake code
 		if (intakeIn.isPressed())
 		{
-			intake.move_voltage(12000);
+			intake.move_voltage(-12000);
 		}
 		else if (intakeOut.isPressed())
 		{
-			intake.move_voltage(-7500);
+			intake.move_voltage(5750);
 		}
 		else
 		{
@@ -168,12 +227,12 @@ void opcontrol()
 		// flywheel
 		if (fastFlywheel.isPressed())
 		{ // max speed
-			target = 600.0;
+			target = 650.0;
 		}
 		else if (slowFlywheel.isPressed())
 		{ // 2.5k rpm
-			target = 400.0;
-			pros::lcd::set_background_color(255, 0, 0);
+			target = 560.0;
+			// pros::lcd::set_background_color(255, 0, 0);
 		}
 		else if (flywheelStop.isPressed())
 		{
@@ -194,14 +253,24 @@ void opcontrol()
 			AngleChanger.set_value(angled);
 		}
 
+		if (launchEndgame.changedToPressed())
+		{
+			endgame.set_value(true);
+		}
+
 		if (target != 0)
 		{
 			flywheel.move_velocity(pid(flywheel.get_actual_velocity(), target));
 		}
 
+		if (flywheel.get_actual_velocity() > maxSpeed)
+		{
+			maxSpeed = flywheel.get_actual_velocity();
+		}
+
 		// print flywheel speed
 		pros::lcd::set_text(6, std::to_string(flywheel.get_actual_velocity()));
-		pros::lcd::set_text(7, std::to_string(ierror));
+		pros::lcd::set_text(7, std::to_string(maxSpeed));
 		pros::lcd::set_text(5, std::to_string(target));
 
 		// print intake temperature
