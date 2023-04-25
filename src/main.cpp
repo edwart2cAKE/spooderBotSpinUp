@@ -21,8 +21,8 @@ std::shared_ptr<OdomChassisController> chassis =
 		.withDimensions({AbstractMotor::gearset::green, (36.0 / 60.0)}, {{3.25_in, 11.5_in}, imev5GreenTPR})
 		/*/ PID
 		.withGains(
-			{0.45, 0.1, 0.1}, // distance controller gains
-			{0.45, 0.1, 0.1}  // turn controller gains // angle controller gains (helps drive straight)
+			{0.45, 0.0, 0.1}, // distance controller gains
+			{0.45, 0.0, 0.1}  // turn controller gains // angle controller gains (helps drive straight)
 			)				  //*/
 		.withOdometry()
 		.buildOdometry();
@@ -33,11 +33,17 @@ std::shared_ptr<OdomChassisController> chassis =
 pros::Motor intake(7);
 pros::Motor flywheel(19);
 
+const unsigned int smoothness = 3;
+// AverageFilter filter = AverageFilter<smoothness>;
+
 // make angle changer
 bool angled = false;
 pros::ADIDigitalOut AngleChanger('h', angled);
 
 pros::ADIDigitalOut endgame('a', false);
+
+// auton selector
+int auto_select = 0;
 
 /**
  * A callback function for LLEMU's center button.
@@ -49,27 +55,32 @@ double integral = 0;
 double prevError = 0;
 double maxSpeed = 0;
 
-const float kP = 1;
-const float kI = 0.1;
-const float kD = 0.2;
+const float kF = 0.1;
+float kP = 0.2/4.6875;
+const float kI = 0.0;
+float kD = 0.0;
 
 int pid(double speed, double target)
 {
 	const float dt = 0.01;
 	double error = target - speed;
-	integral += error;
-	if (integral > target || error == 0)
+	integral += error * dt;
+	if (error < -100 || error > 100)
 	{
 		integral = 0;
+		kP = 1/4.6875;
+		kD = 0;
 	}
-	else if (error < -100 || error > 100)
+	else
 	{
-		integral = 0;
+		kP = 0.2/4.6875;
+		kD = 0.1/4.6875;
 	}
-	// double derivative = error - prevError;
-	// prevError = error;
+	double derivative = (error - prevError) / dt;
+	prevError = error;
 
-	return speed + kP * error + kI * integral; // + kD * derivative;
+	return speed + kP * error + kI * integral + kD * derivative;
+	// return target + kP * error + kI * integral + kD * derivative;
 }
 
 void on_center_button()
@@ -120,7 +131,9 @@ void disabled() {}
  * This task will exit when the robot is enabled and autonomous or opcontrol
  * starts.
  */
-void competition_initialize() {}
+void competition_initialize()
+{
+}
 
 /**
  * Runs the user autonomous code. This function will be started in its own task
@@ -134,47 +147,122 @@ void competition_initialize() {}
  * from where it left off.
  */
 
-bool auto_done = false;
+volatile bool auto_done = false;
+volatile double fs = 100;
 void set_flywheel()
 {
 	while (!auto_done)
 	{
-		flywheel.move_velocity(pid(flywheel.get_actual_velocity(), 615));
+		flywheel.move(fs/4.6875+pid(flywheel.get_actual_velocity(), fs));
 		pros::delay(10);
 	}
 }
 
 void autonomous()
 {
+
+	chassis->setTurnThreshold(0.1_deg);
+	chassis->setMoveThreshold(1_in);
+	// Auton
 	pros::Task my_task(set_flywheel);
 
-	chassis->setMaxVelocity(25);
+	// AngleChanger.set_value(true);
 
-	chassis->setState({0_in, 0_in, 0_deg});
+	// left side
+	if (auto_select == 0)
+	{
+		// roller
+		chassis->setMaxVelocity(25);
 
-	chassis->driveToPoint({-1.5_in, 0_in}, true);
-	chassis->waitUntilSettled();
+		chassis->setState({0_in, 0_in, 0_deg});
 
-	intake.move_relative(-600, 200);
-	pros::delay(500);
+		chassis->driveToPoint({-1.2_in, 0_in}, true);
+		// chassis->waitUntilSettled();
 
-	chassis->setMaxVelocity(50);
+		intake.move_relative(-600, 200);
+		pros::delay(500);
 
-	chassis->moveDistanceAsync(8_in);
-	intake.move_velocity(-200);
-	chassis->waitUntilSettled();
+		// shoot 2
+		chassis->setMaxVelocity(50);
+		//intake.move_velocity(-200);
 
-	chassis->turnAngle(-22.25_deg);
+		chassis->moveDistance(16_in);
+		chassis->waitUntilSettled();
 
-	pros::delay(500);
+		chassis->turnAngle(-10_deg);
+		chassis->waitUntilSettled();
 
-	intake.move_relative(400, 200);
+		chassis->moveDistance(-2.6_in);
+		chassis->waitUntilSettled();
 
-	pros::delay(1000);
+		chassis->turnAngle(-9_deg);
+		chassis->waitUntilSettled();
 
-	intake.move_relative(10000, 200);
+		intake.move_relative(500, 200);
 
-	pros::delay(100);
+		pros::delay(800);
+
+		intake.move_relative(1000, 200);
+
+		// shoot 3
+		//intake.move_velocity(-200);
+	}
+
+	// right side
+	if (auto_select == 1)
+	{
+		chassis->setMaxVelocity(50);
+		intake.move_velocity(-200);
+
+		chassis->setState({0_in, 0_in, 0_deg});
+
+		chassis->driveToPoint({1_tile, 0_in});
+		chassis->waitUntilSettled();
+
+		chassis->turnToPoint({4.5_tile, 3.17_tile});
+		chassis->waitUntilSettled();
+
+		chassis->moveDistanceAsync(3.5_in);
+		pros::delay(500);
+		intake.move(0);
+		chassis->waitUntilSettled();
+
+		pros::delay(100);
+
+		// #### shoot
+		intake.move_relative(500, 200);
+
+		//chassis->turnAngleAsync(5_deg);
+		pros::delay(1500);
+		//chassis->waitUntilSettled();
+
+		// #### shoot
+		intake.move_relative(500, 200);
+
+		pros::delay(400);
+		//chassis->turnAngleAsync(10_deg);
+		pros::delay(800);
+		//chassis->waitUntilSettled();
+
+		// #### shoot
+		intake.move_relative(1000, 200);
+
+		pros::delay(400);
+
+		chassis->setMaxVelocity(100);
+
+		chassis->driveToPoint({0.1_tile, 1.25_tile},true);
+
+		chassis->turnAngle(42.5_deg);
+
+		chassis->moveDistance(-7_in);
+		chassis->waitUntilSettled();
+
+		intake.move_relative(-600, 200);
+	}
+	
+	
+	chassis->setMaxVelocity(200);
 	auto_done = true;
 }
 
@@ -217,7 +305,7 @@ void opcontrol()
 		}
 		else if (intakeOut.isPressed())
 		{
-			intake.move_voltage(5750);
+			intake.move_voltage(8000);
 		}
 		else
 		{
@@ -227,11 +315,11 @@ void opcontrol()
 		// flywheel
 		if (fastFlywheel.isPressed())
 		{ // max speed
-			target = 650.0;
+			target = 700.0;
 		}
 		else if (slowFlywheel.isPressed())
 		{ // 2.5k rpm
-			target = 560.0;
+			target = 515.0;
 			// pros::lcd::set_background_color(255, 0, 0);
 		}
 		else if (flywheelStop.isPressed())
@@ -240,7 +328,7 @@ void opcontrol()
 			flywheel.move_voltage(0);
 		}
 		// change brain color if intake is hot
-		if (intake.get_temperature() > 70)
+		if (flywheel.get_temperature() > 45)
 		{
 			pros::lcd::set_background_color(255, 0, 0);
 		}
@@ -260,7 +348,8 @@ void opcontrol()
 
 		if (target != 0)
 		{
-			flywheel.move_velocity(pid(flywheel.get_actual_velocity(), target));
+			flywheel.move(target/4.6875 + 
+				pid(flywheel.get_actual_velocity(), target));
 		}
 
 		if (flywheel.get_actual_velocity() > maxSpeed)
@@ -270,13 +359,13 @@ void opcontrol()
 
 		// print flywheel speed
 		pros::lcd::set_text(6, std::to_string(flywheel.get_actual_velocity()));
-		pros::lcd::set_text(7, std::to_string(maxSpeed));
+		pros::lcd::set_text(7, std::to_string(target - flywheel.get_actual_velocity()));
 		pros::lcd::set_text(5, std::to_string(target));
 
 		// print intake temperature
-		pros::lcd::set_text(4, std::to_string(intake.get_temperature()));
+		pros::lcd::set_text(4, std::to_string(flywheel.get_temperature()));
 
 		// wait to give time for the processor to do other tasks
-		pros::delay(20);
+		pros::delay(10);
 	}
 }
